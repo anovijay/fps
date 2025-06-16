@@ -1,6 +1,10 @@
 # Required
 OPENAI_API_KEY=your_openai_api_key_here
 
+# API key required for protected endpoints
+API_KEY=your_api_key_here
+
 # Optional
 PORT=8080
 DEBUG=false 
+

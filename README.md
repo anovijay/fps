@@ -80,6 +80,15 @@ curl -X POST -F "mail_id=email_002" -F "files=@invoice.pdf" http://localhost:808
 curl -X POST -F "mail_id=email_003" -F "files=@doc1.pdf" -F "files=@receipt.jpg" http://localhost:8080/process
 ```
 
+### Query Collection with Subcollection
+Query Firestore documents along with a nested subcollection using filters:
+
+```bash
+GET /collections/<collection_name>/subcollections/<subcollection_name>?subcollection_status=<value>
+```
+
+Results include the collection documents and the matching subcollection documents.
+
 ### Response Format
 ```json
 {
