@@ -81,7 +81,11 @@ curl -X POST -F "mail_id=email_003" -F "files=@doc1.pdf" -F "files=@receipt.jpg"
 ```
 
 ### Query Collection with Subcollection
-Query Firestore documents along with a nested subcollection using filters:
+
+Query an external service for documents and their subcollections. The service URL
+and API key are fetched from Secret Manager (`fs-adapter-url` and
+`fs-adapter-api-key`).
+
 
 ```bash
 GET /collections/<collection_name>/subcollections/<subcollection_name>?subcollection_status=<value>
@@ -166,9 +170,8 @@ Results include the collection documents and the matching subcollection document
 
 Compared to the original service, this version removes:
 - ❌ Pub/Sub message handling
-- ❌ Google Cloud Storage dependencies  
+- ❌ Google Cloud Storage dependencies
 - ❌ Firestore database
-- ❌ Secret Manager
 - ❌ Batch processing complexity
 - ❌ Multiple web frameworks
 - ❌ Complex deployment dependencies

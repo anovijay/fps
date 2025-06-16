@@ -7,6 +7,8 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from openai import OpenAI
 from dotenv import load_dotenv
+import urllib.request
+import urllib.parse
 from google.cloud import storage
 from google.cloud import firestore
 from google.cloud import secretmanager
@@ -41,39 +43,50 @@ def require_api_key(func):
 
     return wrapper
 
+def fetch_secret(secret_name: str) -> str:
+    """Retrieve a secret value from Secret Manager."""
+    project_id = (
+        os.getenv("GCP_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("PROJECT_ID")
+    )
+    if not project_id:
+        raise RuntimeError("GCP project ID not configured")
 
-def query_firestore_with_subcollection(
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("utf-8")
+
+
+def query_adapter_with_subcollection(
+
     collection_name: str,
     subcollection_name: str,
     collection_filters: dict,
     subcollection_filters: dict,
 ):
-    """Query Firestore collection and include filtered subcollection docs."""
+  
+    """Call the fs-adapter service to query a collection with a subcollection."""
 
-    db = firestore.Client()
+    base_url = fetch_secret("fs-adapter-url")
+    api_key = fetch_secret("fs-adapter-api-key")
 
-    query = db.collection(collection_name)
+    url = f"{base_url}/collections/{collection_name}/subcollections/{subcollection_name}"
+
+    params = {}
     for field, value in collection_filters.items():
-        query = query.where(field, "==", value)
+        params[f"collection_{field}"] = value
+    for field, value in subcollection_filters.items():
+        params[f"subcollection_{field}"] = value
 
-    collection_docs = query.stream()
-    results = []
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
 
-    for doc in collection_docs:
-        doc_data = {"id": doc.id, **doc.to_dict()}
+    req = urllib.request.Request(url, headers={"X-API-Key": api_key})
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
-        sub_query = doc.reference.collection(subcollection_name)
-        for field, value in subcollection_filters.items():
-            sub_query = sub_query.where(field, "==", value)
-
-        sub_docs = sub_query.stream()
-        sub_data = [{"id": s.id, **s.to_dict()} for s in sub_docs]
-
-        if not subcollection_filters or sub_data:
-            doc_data[subcollection_name] = sub_data
-            results.append(doc_data)
-
-    return results
 
 # Supported file extensions
 ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp'}
@@ -300,7 +313,8 @@ def health():
 @app.route('/collections/<collection>/subcollections/<subcollection>', methods=['GET'])
 @require_api_key
 def query_collection_with_subcollection_route(collection, subcollection):
-    """Query Firestore collection along with a subcollection."""
+
+    """Query the external service for a collection and its subcollection."""
 
     try:
         collection_filters = {}
@@ -313,7 +327,8 @@ def query_collection_with_subcollection_route(collection, subcollection):
                 field = key[len('subcollection_'):]
                 subcollection_filters[field] = value
 
-        results = query_firestore_with_subcollection(
+
+        results = query_adapter_with_subcollection(
             collection_name=collection,
             subcollection_name=subcollection,
             collection_filters=collection_filters,
@@ -323,7 +338,7 @@ def query_collection_with_subcollection_route(collection, subcollection):
         return jsonify({'status': 'success', 'data': results}), 200
 
     except Exception as e:
-        logger.error(f'Error querying Firestore: {e}')
+        logger.error(f'Error querying adapter service: {e}')
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 @app.route('/process', methods=['POST'])
