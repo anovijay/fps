@@ -7,9 +7,11 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from openai import OpenAI
 from dotenv import load_dotenv
-from google.cloud import secretmanager
 import urllib.request
 import urllib.parse
+from google.cloud import storage
+from google.cloud import firestore
+from google.cloud import secretmanager
 from functools import wraps
 
 # Load environment variables
@@ -41,7 +43,6 @@ def require_api_key(func):
 
     return wrapper
 
-
 def fetch_secret(secret_name: str) -> str:
     """Retrieve a secret value from Secret Manager."""
     project_id = (
@@ -59,11 +60,13 @@ def fetch_secret(secret_name: str) -> str:
 
 
 def query_adapter_with_subcollection(
+
     collection_name: str,
     subcollection_name: str,
     collection_filters: dict,
     subcollection_filters: dict,
 ):
+  
     """Call the fs-adapter service to query a collection with a subcollection."""
 
     base_url = fetch_secret("fs-adapter-url")
@@ -83,6 +86,7 @@ def query_adapter_with_subcollection(
     req = urllib.request.Request(url, headers={"X-API-Key": api_key})
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
 
 # Supported file extensions
 ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp'}
@@ -309,6 +313,7 @@ def health():
 @app.route('/collections/<collection>/subcollections/<subcollection>', methods=['GET'])
 @require_api_key
 def query_collection_with_subcollection_route(collection, subcollection):
+
     """Query the external service for a collection and its subcollection."""
 
     try:
@@ -321,6 +326,7 @@ def query_collection_with_subcollection_route(collection, subcollection):
             elif key.startswith('subcollection_'):
                 field = key[len('subcollection_'):]
                 subcollection_filters[field] = value
+
 
         results = query_adapter_with_subcollection(
             collection_name=collection,
