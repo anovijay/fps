@@ -9,7 +9,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from google.cloud import storage
 from google.cloud import firestore
-from google.cloud import secretmanager  
+from google.cloud import secretmanager
+from functools import wraps
 
 # Load environment variables
 load_dotenv()
@@ -24,6 +25,55 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Initialize OpenAI client
 openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+def require_api_key(func):
+    """Simple API key check using the X-API-Key header."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        api_key = request.headers.get("X-API-Key")
+        expected_key = os.getenv("API_KEY")
+        if expected_key and api_key != expected_key:
+            return jsonify({"status": "error", "error": "Invalid API key"}), 401
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def query_firestore_with_subcollection(
+    collection_name: str,
+    subcollection_name: str,
+    collection_filters: dict,
+    subcollection_filters: dict,
+):
+    """Query Firestore collection and include filtered subcollection docs."""
+
+    db = firestore.Client()
+
+    query = db.collection(collection_name)
+    for field, value in collection_filters.items():
+        query = query.where(field, "==", value)
+
+    collection_docs = query.stream()
+    results = []
+
+    for doc in collection_docs:
+        doc_data = {"id": doc.id, **doc.to_dict()}
+
+        sub_query = doc.reference.collection(subcollection_name)
+        for field, value in subcollection_filters.items():
+            sub_query = sub_query.where(field, "==", value)
+
+        sub_docs = sub_query.stream()
+        sub_data = [{"id": s.id, **s.to_dict()} for s in sub_docs]
+
+        if not subcollection_filters or sub_data:
+            doc_data[subcollection_name] = sub_data
+            results.append(doc_data)
+
+    return results
 
 # Supported file extensions
 ALLOWED_EXTENSIONS = {'.txt', '.pdf', '.doc', '.docx', '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.webp'}
@@ -246,6 +296,36 @@ def health():
     """Health check endpoint"""
     return jsonify({'status': 'ok', 'service': 'File Processing Service'}), 200
 
+
+@app.route('/collections/<collection>/subcollections/<subcollection>', methods=['GET'])
+@require_api_key
+def query_collection_with_subcollection_route(collection, subcollection):
+    """Query Firestore collection along with a subcollection."""
+
+    try:
+        collection_filters = {}
+        subcollection_filters = {}
+        for key, value in request.args.items():
+            if key.startswith('collection_'):
+                field = key[len('collection_'):]
+                collection_filters[field] = value
+            elif key.startswith('subcollection_'):
+                field = key[len('subcollection_'):]
+                subcollection_filters[field] = value
+
+        results = query_firestore_with_subcollection(
+            collection_name=collection,
+            subcollection_name=subcollection,
+            collection_filters=collection_filters,
+            subcollection_filters=subcollection_filters,
+        )
+
+        return jsonify({'status': 'success', 'data': results}), 200
+
+    except Exception as e:
+        logger.error(f'Error querying Firestore: {e}')
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
 @app.route('/process', methods=['POST'])
 def process_files():
     """Main endpoint to process email with attachments"""
@@ -296,6 +376,7 @@ def index():
         'endpoints': {
             'GET /health': 'Health check',
             'POST /process': 'Process email with attachments (multipart/form-data with optional "files" field and optional "mail_id")',
+            'GET /collections/<collection>/subcollections/<subcollection>': 'Query a Firestore collection and include its subcollection documents',
             'GET /': 'This help page'
         },
         'supported_formats': list(ALLOWED_EXTENSIONS),
